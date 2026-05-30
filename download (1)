@@ -1,0 +1,490 @@
+import { useState, useEffect } from 'react';
+import { 
+  Wifi, 
+  WifiOff,
+  Bluetooth, 
+  Cpu, 
+  Smartphone, 
+  Layers, 
+  Zap, 
+  ShieldCheck, 
+  ArrowRightLeft, 
+  TrendingUp, 
+  RefreshCw, 
+  HardDrive, 
+  Info,
+  CheckCircle,
+  Clock,
+  ArrowRight
+} from 'lucide-react';
+import { SimulatedFile, DeviceState, P2PConnection, TransferEvent, AndroidApp } from './types';
+import { PhoneMockup } from './components/PhoneMockup';
+import { formatBytes } from './components/SystemApps';
+import { motion, AnimatePresence } from 'motion/react';
+
+// Predefined Initial Files
+const INITIAL_ALPHA_FILES: SimulatedFile[] = [
+  { id: 'a1', name: 'Rapport_Projet_IA.pdf', size: 14500000, type: 'document', updatedAt: '28/05/2026 14:15' },
+  { id: 'a2', name: 'Photo_Shooting_4K.jpg', size: 4800000, type: 'image', updatedAt: '29/05/2026 09:30' },
+  { id: 'a3', name: 'Video_Presentation_Fini.mp4', size: 310000000, type: 'video', updatedAt: '30/05/2026 01:10' },
+  { id: 'a4', name: 'Maquette_Dashboard.fig', size: 8900000, type: 'folder', updatedAt: '25/05/2026 17:42' },
+];
+
+const INITIAL_BETA_FILES: SimulatedFile[] = [
+  { id: 'b1', name: 'Ambiance_Chill_Synth.mp3', size: 7400000, type: 'music', updatedAt: '26/05/2026 11:05' },
+  { id: 'b2', name: 'Presentation_Pitch.pptx', size: 24500000, type: 'document', updatedAt: '29/05/2026 18:22' },
+  { id: 'b3', name: 'Screenshot_System_Logs.png', size: 1200000, type: 'image', updatedAt: '30/05/2026 03:52' },
+];
+
+export default function App() {
+  // Device state
+  const [deviceAlpha, setDeviceAlpha] = useState<DeviceState>({
+    id: 'phone-alpha',
+    name: 'appareil-alpha',
+    modelName: 'Galaxy S26 Ultra',
+    battery: 88,
+    bleEnabled: true,
+    wifiDirectEnabled: true,
+    p2pStatus: 'disconnected',
+    mountedPeerStorage: false,
+    currentPath: 'local',
+    openApp: 'home',
+    wallpaperIndex: 0,
+    files: INITIAL_ALPHA_FILES,
+    clipboard: null,
+  });
+
+  const [deviceBeta, setDeviceBeta] = useState<DeviceState>({
+    id: 'phone-beta',
+    name: 'appareil-beta',
+    modelName: 'Pixel 10 Pro',
+    battery: 94,
+    bleEnabled: true,
+    wifiDirectEnabled: true,
+    p2pStatus: 'disconnected',
+    mountedPeerStorage: false,
+    currentPath: 'local',
+    openApp: 'home',
+    wallpaperIndex: 1,
+    files: INITIAL_BETA_FILES,
+    clipboard: null,
+  });
+
+  // Global P2P Connection
+  const [connection, setConnection] = useState<P2PConnection>({
+    status: 'disconnected',
+    channel: 'None',
+    protocol: 'None',
+    speedMbps: 0,
+    signalStrength: 100,
+    transferredBytesThisSession: 0,
+  });
+
+  // Share system clipboard logic
+  const [pasteboard, setPasteboard] = useState<SimulatedFile | null>(null);
+
+  // Transfer history events log
+  const [transferLogs, setTransferLogs] = useState<TransferEvent[]>([
+    {
+      id: 'log-1',
+      fileName: 'System_Config_Boot.sys',
+      fileSize: 450000,
+      speedMbps: 95,
+      durationMs: 4,
+      timestamp: '30/05/2026 04:12',
+      direction: 'alpha-to-beta',
+    },
+  ]);
+
+  // Handle opening apps
+  const handleSetOpenApp = (deviceId: DeviceState['id'], app: AndroidApp) => {
+    if (deviceId === 'phone-alpha') {
+      setDeviceAlpha(prev => ({ ...prev, openApp: app }));
+    } else {
+      setDeviceBeta(prev => ({ ...prev, openApp: app }));
+    }
+  };
+
+  // Handle setting wallpapers
+  const handleSetWallpaper = (deviceId: DeviceState['id'], index: number) => {
+    if (deviceId === 'phone-alpha') {
+      setDeviceAlpha(prev => ({ ...prev, wallpaperIndex: index }));
+    } else {
+      setDeviceBeta(prev => ({ ...prev, wallpaperIndex: index }));
+    }
+  };
+
+  // Toggle BLE or WiFi subsystems
+  const handleToggleP2PSubsystems = (deviceId: DeviceState['id'], subsystem: 'ble' | 'wifi') => {
+    const targetSet = deviceId === 'phone-alpha' ? setDeviceAlpha : setDeviceBeta;
+    
+    targetSet(prev => {
+      const updated = {
+        ...prev,
+        bleEnabled: subsystem === 'ble' ? !prev.bleEnabled : prev.bleEnabled,
+        wifiDirectEnabled: subsystem === 'wifi' ? !prev.wifiDirectEnabled : prev.wifiDirectEnabled,
+      };
+
+      // If either subsystem is disabled, break active connections
+      if (!updated.bleEnabled || !updated.wifiDirectEnabled) {
+        setConnection({
+          status: 'disconnected',
+          channel: 'None',
+          protocol: 'None',
+          speedMbps: 0,
+          signalStrength: 100,
+          transferredBytesThisSession: prev.clipboard ? 0 : 0
+        });
+        setDeviceAlpha(p => ({ ...p, mountedPeerStorage: false, p2pStatus: 'disconnected' }));
+        setDeviceBeta(p => ({ ...p, mountedPeerStorage: false, p2pStatus: 'disconnected' }));
+      }
+
+      return updated;
+    });
+  };
+
+  // File synchronization callback (handles actual state replication on local clipboard copy-pastes)
+  const handleTriggerTransfer = (
+    file: SimulatedFile, 
+    sourceId: DeviceState['id'], 
+    destId: DeviceState['id'],
+    onComplete: () => void
+  ) => {
+    // Add file to target device
+    if (destId === 'phone-alpha') {
+      setDeviceAlpha(prev => ({ ...prev, files: [...prev.files, file] }));
+    } else {
+      setDeviceBeta(prev => ({ ...prev, files: [...prev.files, file] }));
+    }
+
+    // Compute metrics
+    const startSize = file.size;
+    const speed = connection.speedMbps; // e.g. 1150 Mo/s
+    const durationMs = Math.round((startSize / (speed * 1024 * 1024)) * 1000);
+    const finalDurationMs = Math.max(80, durationMs); // visually satisfying threshold
+
+    // Log the transfer
+    const newEvent: TransferEvent = {
+      id: Math.random().toString(36).substring(4),
+      fileName: file.name,
+      fileSize: file.size,
+      speedMbps: speed,
+      durationMs: finalDurationMs,
+      timestamp: new Date().toLocaleTimeString('fr-FR', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+      direction: sourceId === 'phone-alpha' ? 'alpha-to-beta' : 'beta-to-alpha'
+    };
+
+    setTransferLogs(prev => [newEvent, ...prev]);
+    setConnection(prev => ({
+      ...prev,
+      transferredBytesThisSession: prev.transferredBytesThisSession + file.size,
+    }));
+
+    onComplete();
+  };
+
+  // Update files locally
+  const handleUpdateFiles = (deviceId: DeviceState['id'], files: SimulatedFile[]) => {
+    if (deviceId === 'phone-alpha') {
+      setDeviceAlpha(prev => ({ ...prev, files }));
+    } else {
+      setDeviceBeta(prev => ({ ...prev, files }));
+    }
+  };
+
+  // Quick state overrides
+  const handleUpdateP2P = (updates: Partial<P2PConnection>) => {
+    setConnection(prev => ({ ...prev, ...updates }));
+  };
+
+  // Routerless Peer Negotiations state transition
+  const handleTriggerNegotiation = () => {
+    if (!deviceAlpha.bleEnabled || !deviceAlpha.wifiDirectEnabled || 
+        !deviceBeta.bleEnabled || !deviceBeta.wifiDirectEnabled) {
+      alert("Erreur: Les deux appareils doivent activer le BLE et le Wi-Fi Direct pour négocier la connexion.");
+      return;
+    }
+
+    setConnection(prev => ({ ...prev, status: 'ble-discovery' }));
+    setDeviceAlpha(prev => ({ ...prev, p2pStatus: 'discovering' }));
+    setDeviceBeta(prev => ({ ...prev, p2pStatus: 'discovering' }));
+
+    // Step 2: Handshake
+    setTimeout(() => {
+      setConnection(prev => ({ ...prev, status: 'handshake' }));
+      setDeviceAlpha(prev => ({ ...prev, p2pStatus: 'connecting' }));
+      setDeviceBeta(prev => ({ ...prev, p2pStatus: 'connecting' }));
+
+      // Step 3: Secure via WPA3-P2P direct host negotiation
+      setTimeout(() => {
+        setConnection(prev => ({ ...prev, status: 'wifi-securing' }));
+
+        // Step 4: Fully Connected
+        setTimeout(() => {
+          setConnection({
+            status: 'connected',
+            channel: '6 GHz (Ch 37 / Ultra-Direct)',
+            protocol: 'Wi-Fi Direct P2P (High Speed)',
+            speedMbps: 1150, // 1.15 GB/s virtual bandwidth
+            signalStrength: 98,
+            transferredBytesThisSession: 0,
+          });
+
+          setDeviceAlpha(prev => ({ ...prev, p2pStatus: 'connected', mountedPeerStorage: true }));
+          setDeviceBeta(prev => ({ ...prev, p2pStatus: 'connected', mountedPeerStorage: true }));
+        }, 1200);
+
+      }, 1000);
+
+    }, 1200);
+  };
+
+  // Auto connect components on load for smooth workspace demo start
+  useEffect(() => {
+    handleTriggerNegotiation();
+  }, []);
+
+  return (
+    <div className="min-h-screen bg-[#050608] text-[#e3e3e3] font-sans flex flex-col antialiased relative overflow-x-hidden">
+      
+      {/* Background Ambient Glow Spheres from Immersive UI */}
+      <div className="absolute top-[-100px] left-[-100px] w-[500px] h-[500px] bg-[#3ddc84] opacity-5 blur-[120px] rounded-full pointer-events-none"></div>
+      <div className="absolute bottom-[-100px] right-[-100px] w-[400px] h-[400px] bg-[#4285f4] opacity-5 blur-[120px] rounded-full pointer-events-none"></div>
+
+      {/* Top System Bar from Immersive UI */}
+      <div className="h-8 px-6 flex items-center justify-between text-[11px] font-medium tracking-tight bg-black/40 border-b border-white/5 z-50">
+        <div className="flex items-center gap-4">
+          <span className="font-semibold font-mono">9:41 AM</span>
+          <div className="flex items-center gap-1.5 opacity-65 font-bold text-[9px] font-mono">
+            <div className="w-1 h-2 bg-[#3ddc84]"></div>
+            <div className="w-1 h-3 bg-[#3ddc84]"></div>
+            <div className="w-1 h-4 bg-[#3ddc84]"></div>
+            <span>5G MESH P2P COMPATIBLE</span>
+          </div>
+        </div>
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-1.5 text-[#3ddc84] font-mono font-bold text-[10px]">
+            <div className="w-2 h-2 rounded-full bg-[#3ddc84] animate-pulse"></div>
+            <span>{connection.status === 'connected' ? 'P2P LINKED' : 'WIFI DIRECT SCANNING'}</span>
+          </div>
+          <div className="w-10 h-5 border border-white/20 rounded-md relative flex items-center px-1">
+            <div className="w-6 h-3 bg-white/80 rounded-[1px]"></div>
+            <div className="absolute -right-1.5 w-1 h-2 bg-white/20 rounded-sm"></div>
+          </div>
+        </div>
+      </div>
+
+      {/* Main OS Header - Nexus Mesh Styling */}
+      <header className="px-6 py-6 md:px-10 md:py-8 flex flex-col md:flex-row items-start md:items-end justify-between border-b border-white/5 bg-black/10 backdrop-blur-sm z-35 gap-4">
+        <div>
+          <h1 className="text-3xl md:text-4xl font-bold tracking-tighter text-white uppercase font-display">
+            Nexus Mesh <span className="text-[#3ddc84]">OS</span>
+          </h1>
+          <p className="text-[#3ddc84]/70 text-xs mt-1 uppercase tracking-widest font-black font-mono">
+            UnityOS • Storage Virtualization Layer v4.2
+          </p>
+        </div>
+        
+        {/* Sync Indicator badge */}
+        <div className="flex gap-2">
+          <div className="bg-white/5 px-4 py-2 rounded-full border border-white/10 flex items-center gap-3">
+            <span className="text-[10px] text-white/50 font-black font-mono tracking-wider">METADATA SYNC RATE</span>
+            <span className="text-xs font-mono text-[#3ddc84] font-bold">1.15 Go/s</span>
+            <div className="flex gap-0.5">
+              <div className="w-1 h-1 bg-[#3ddc84] rounded-full"></div>
+              <div className="w-1 h-1 bg-[#3ddc84] rounded-full"></div>
+              <div className="w-1 h-1 bg-[#4285f4] rounded-full animate-pulse"></div>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      {/* Main Workspace Grid */}
+      <main className="flex-1 max-w-7xl mx-auto px-4 py-6 w-full grid grid-cols-1 lg:grid-cols-12 gap-8 items-start z-30">
+        
+        {/* Left column: Comprehensive Explanations / Handshake state */}
+        <div className="lg:col-span-4 space-y-6">
+          
+          {/* Conceptual Presentation Card */}
+          <section className="bg-white/[0.03] border border-white/10 p-6 rounded-3xl space-y-4 shadow-2xl relative overflow-hidden backdrop-blur-md">
+            <div className="absolute top-0 right-0 w-32 h-32 bg-[#3ddc84]/5 rounded-full blur-2xl pointer-events-none" />
+            
+            <h2 className="text-[10px] font-black text-[#3ddc84] uppercase tracking-widest font-mono">Le Concept Système</h2>
+            <h3 className="text-lg font-bold text-white font-display tracking-tight">Fusion de Stockage Décentralisé</h3>
+            
+            <p className="text-xs text-white/70 leading-relaxed">
+              D'ordinaire, les fichiers distants s'envoient en sélectionnant un « destinataire ». Ici, l'OS système monte le téléphone partenaire directement dans l'arborescence comme un <span className="text-[#3ddc84] font-semibold">disque dur local</span>.
+            </p>
+
+            <div className="space-y-4 pt-2 text-xs">
+              <div className="flex gap-3">
+                <div className="w-6 h-6 rounded-lg bg-white/5 border border-white/10 text-[#3ddc84] flex items-center justify-center font-mono font-bold text-[10px] shrink-0">1</div>
+                <div>
+                  <p className="font-bold text-white">Zéro intermédiaire externe</p>
+                  <p className="text-[11px] text-white/50 mt-0.5 leading-normal">La liaison Wi-Fi Direct Peer-to-Peer négocie la connexion directement, en sécurité WPA3, sans passer par un réseau tiers ni une box internet.</p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="w-6 h-6 rounded-lg bg-white/5 border border-white/10 text-[#3ddc84] flex items-center justify-center font-mono font-bold text-[10px] shrink-0">2</div>
+                <div>
+                  <p className="font-bold text-white">Débit Wi-Fi Ultra-Direct</p>
+                  <p className="text-[11px] text-white/50 mt-0.5 leading-normal">En mutualisant les bandes 5 GHz et 6 GHz, le protocole dépasse les limitations classiques pour ressembler à un bus de données interne rapide.</p>
+                </div>
+              </div>
+
+              <div className="flex gap-3">
+                <div className="w-6 h-6 rounded-lg bg-white/5 border border-white/10 text-[#3ddc84] flex items-center justify-center font-mono font-bold text-[10px] shrink-0">3</div>
+                <div>
+                  <p className="font-bold text-white">Copier-Coller Unifié</p>
+                  <p className="text-[11px] text-white/50 mt-0.5 leading-normal">Copiez un document d'un téléphone, ouvrez le disque réseau ("stockage_etendu") de l'autre, et collez-le de façon native.</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {/* Quick Scenario instructions */}
+          <section className="bg-white/[0.01] border border-white/5 p-6 rounded-3xl space-y-4">
+            <h4 className="text-xs font-black text-white/45 uppercase tracking-widest font-mono flex items-center gap-2">
+              <Info className="w-4 h-4 text-[#3ddc84]" />
+              GUIDE DE TEST INTERACTIF
+            </h4>
+            <div className="space-y-3 text-xs text-white/80">
+              <p>Suivez ces étapes pour tester la gestion des fichiers réseau montés :</p>
+              
+              <ol className="list-decimal pl-4 space-y-2.5 text-[11px] text-white/60 font-sans">
+                <li>
+                  Sur le <span className="text-[#3ddc84] font-medium">Galaxy S26 (Alpha)</span>, ouvrez l'application <span className="text-white font-medium">Fichiers</span>.
+                </li>
+                <li>
+                  Sélectionnez un fichier local (ex: <span className="italic text-white/80 font-mono">Video_Presentation_Fini.mp4</span>), cliquez dessus puis faites <span className="text-[#3ddc84] font-bold">Copier</span>.
+                </li>
+                <li>
+                  Basculez sur l'onglet <span className="text-[#3ddc84] font-medium">stockage_etendu</span> (en haut de l'explorateur).
+                </li>
+                <li>
+                  Le presse-papiers s'active ! Cliquez sur le bouton <span className="bg-white/5 border border-white/10 text-[#3ddc84] font-mono px-2 py-0.5 rounded-lg">Coller dans Disque P2P</span>.
+                </li>
+                <li>
+                  Le fichier est alors copié à une vitesse fantastique de &gt; 1 Go/s et s'ajoute directement sur l'autre téléphone.
+                </li>
+              </ol>
+
+              {connection.status !== 'connected' && (
+                <div className="p-4 bg-[#3ddc84]/10 border border-[#3ddc84]/20 rounded-2xl flex flex-col justify-center items-center text-center">
+                  <p className="text-[11px] text-[#3ddc84] italic font-semibold">La liaison P2P directe est déconnectée.</p>
+                  <button 
+                    onClick={handleTriggerNegotiation}
+                    className="mt-3.5 w-full py-2 px-4 bg-[#3ddc84] rounded-xl font-bold text-xs text-[#050608] hover:bg-[#3ddc84]/90 transition"
+                  >
+                    DÉMARRER LA NÉGOCIATION DIRECTE
+                  </button>
+                </div>
+              )}
+            </div>
+          </section>
+
+          {/* Quick link statistics & reset logs */}
+          <section className="bg-white/[0.03] border border-white/5 p-5 rounded-3xl text-xs shadow-xl">
+            <div className="flex justify-between items-center text-[10px] font-black font-mono text-white/40 uppercase tracking-widest mb-3">
+              <span>Flux d'activité Direct-Link</span>
+              <button 
+                onClick={() => setTransferLogs([])}
+                className="text-white/40 hover:text-white text-[10px]"
+              >
+                Reset Logs
+              </button>
+            </div>
+            
+            <div className="max-h-48 overflow-y-auto space-y-2.5 font-mono text-[10px]">
+              {transferLogs.length === 0 ? (
+                <p className="text-white/20 italic">Aucun transfert pour cette session.</p>
+              ) : (
+                transferLogs.map((log) => (
+                  <div key={log.id} className="p-3 bg-black/45 rounded-xl border border-white/5 flex items-center justify-between">
+                    <div className="max-w-[70%]">
+                      <p className="text-white truncate font-bold">{log.fileName}</p>
+                      <span className="text-white/40 text-[9px] block mt-0.5">
+                        {log.direction === 'alpha-to-beta' ? 'Alpha ➔ Bêta' : 'Bêta ➔ Alpha'}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <p className="text-[#3ddc84] font-bold">{log.speedMbps} Mo/s</p>
+                      <p className="text-[9px] text-white/40 mt-0.5">{formatBytes(log.fileSize)}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
+        </div>
+
+        {/* Right Columns: Dual Android OS Mockups displaying side-by-side with Immersive UI styling */}
+        <div className="lg:col-span-8 bg-white/[0.02] p-6 lg:p-8 rounded-3xl border border-white/5 flex flex-col md:flex-row justify-center items-center gap-6 overflow-hidden shadow-2xl relative">
+          <div className="absolute inset-0 bg-gradient-to-b from-white/[0.01] to-transparent pointer-events-none rounded-3xl" />
+          
+          {/* Phone Alpha */}
+          <PhoneMockup
+            device={deviceAlpha}
+            peerDevice={deviceBeta}
+            connection={connection}
+            onUpdateFiles={handleUpdateFiles}
+            onUpdateP2P={handleUpdateP2P}
+            onTriggerTransfer={handleTriggerTransfer}
+            onSetOpenApp={handleSetOpenApp}
+            onSetWallpaper={handleSetWallpaper}
+            onToggleP2PSubsystems={handleToggleP2PSubsystems}
+            onTriggerNegotiation={handleTriggerNegotiation}
+            pasteboard={pasteboard}
+            onSetPasteboard={setPasteboard}
+          />
+
+          {/* Separator / Dynamic wireless link status indicator */}
+          <div className="hidden md:flex flex-col items-center justify-center p-2 relative h-full">
+            <div className="w-[1px] h-48 bg-gradient-to-b from-transparent via-[#3ddc84]/30 to-transparent absolute" />
+            <div className="bg-[#050608]/90 rounded-full p-3 border border-white/10 z-10 flex items-center justify-center shadow-2xl relative">
+              {connection.status === 'connected' ? (
+                <motion.div
+                  animate={{ scale: [1, 1.15, 1], rotate: [0, 5, -5, 0] }}
+                  transition={{ repeat: Infinity, duration: 2.5 }}
+                >
+                  <Zap className="w-5 h-5 text-[#3ddc84] fill-[#3ddc84]/20 stroke-[2.5]" />
+                </motion.div>
+              ) : (
+                <WifiOff className="w-5 h-5 text-white/30" />
+              )}
+            </div>
+            <p className="text-[9px] font-black font-mono text-white/40 uppercase tracking-widest mt-6 rotate-90 whitespace-nowrap">
+              {connection.status === 'connected' ? 'WIFI P2P ACTIVE' : 'LIEN COMPROMIS'}
+            </p>
+          </div>
+
+          {/* Phone Beta */}
+          <PhoneMockup
+            device={deviceBeta}
+            peerDevice={deviceAlpha}
+            connection={connection}
+            onUpdateFiles={handleUpdateFiles}
+            onUpdateP2P={handleUpdateP2P}
+            onTriggerTransfer={handleTriggerTransfer}
+            onSetOpenApp={handleSetOpenApp}
+            onSetWallpaper={handleSetWallpaper}
+            onToggleP2PSubsystems={handleToggleP2PSubsystems}
+            onTriggerNegotiation={handleTriggerNegotiation}
+            pasteboard={pasteboard}
+            onSetPasteboard={setPasteboard}
+          />
+
+        </div>
+      </main>
+
+      {/* Footer copyright */}
+      <footer className="border-t border-white/5 bg-black/60 backdrop-blur-lg py-6 mt-12 z-30">
+        <div className="max-w-7xl mx-auto px-6 text-center text-[10px] text-white/40 font-mono flex flex-col md:flex-row justify-between items-center gap-4">
+          <span className="tracking-wide">Nexus Mesh OS Simulator • High-Performance Virtual Distributed Storage Architecture (802.11be P2P Stack & BLE)</span>
+          <span className="text-[#3ddc84] font-bold">© 2026 Google AI Studio Build</span>
+        </div>
+      </footer>
+    </div>
+  );
+}
